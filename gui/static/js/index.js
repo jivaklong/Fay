@@ -83,6 +83,12 @@ class FayInterface {
       });
     }
   
+    getRunStatus() {
+      return this.fetchData(`${this.baseApiUrl}/api/get_run_status`, {
+        method: 'POST'
+      });
+    }
+
     getMessageHistory(username) {
       return new Promise((resolve, reject) => {
         const url = `${this.baseApiUrl}/api/get-msg`;
@@ -122,6 +128,19 @@ class FayInterface {
       });
     }
   
+    getTime(){
+      const date = new Date();
+      const year = date.getFullYear();
+      const month = (date.getMonth() + 1).toString().padStart(2, '0'); // 月份从0开始，需要+1
+      const day = date.getDate().toString().padStart(2, '0');
+      const hours = date.getHours().toString().padStart(2, '0');
+      const minutes = date.getMinutes().toString().padStart(2, '0');
+      const seconds = date.getSeconds().toString().padStart(2, '0');
+      const milliseconds = date.getMilliseconds().toString().padStart(3, '0');
+      const currentDateTimeWithMs = `${year}-${month}-${day} ${hours}:${minutes}:${seconds}.${milliseconds}`;
+      return currentDateTimeWithMs
+    }
+
     handleIncomingMessage(data) {
       const vueInstance = this.vueInstance; 
     //   console.log('Incoming message:', data);
@@ -129,10 +148,8 @@ class FayInterface {
         vueInstance.liveState = data.liveState;
         if (data.liveState === 1) {
           vueInstance.configEditable = false;
-          vueInstance.sendSuccessMsg('已开启！');
         } else if (data.liveState === 0) {
           vueInstance.configEditable = true;
-          vueInstance.sendSuccessMsg('已关闭！');
         }
       }
   
@@ -169,7 +186,8 @@ class FayInterface {
             username: data.panelReply.username,
             content: data.panelReply.content,
             type: data.panelReply.type,
-            time: new Date().toLocaleTimeString()
+            timetext: this.getTime(),
+            is_adopted:0
           });
           vueInstance.$nextTick(() => {
             const chatContainer = vueInstance.$el.querySelector('.chatmessage');
@@ -207,17 +225,31 @@ class FayInterface {
         chatMessages: {},
         panelMsg: '', 
         panelReply: '', 
-        robot:'static/images/Normal.gif'
+        robot:'static/images/Normal.gif',
+        base_url: 'http://127.0.0.1:5000'
       };
     },
     created() {
       this.initFayService();
-      this.loadUserList();
+      // this.loadUserList();
     },
     methods: {
       initFayService() {
-        this.fayService = new FayInterface('ws://127.0.0.1:10003', 'http://127.0.0.1:5000', this);
+        this.fayService = new FayInterface('ws://127.0.0.1:10003', this.base_url, this);
         this.fayService.connectWebSocket();
+        this.fayService.websocket.addEventListener('open', () => {
+          this.loadUserList();
+      });
+      this.fayService.getRunStatus().then((data) => {
+        if (data) {
+            if(data.status){
+                this.liveState = 1;
+            }else{
+                this.liveState = 0;
+            }
+            
+        }
+    });
       },
       sendMessage() {
         let _this = this;
@@ -241,7 +273,7 @@ class FayInterface {
           document.querySelector('.chatmessage').scrollTop = height;
         }, 1000);
         _this.newMessage = '';
-        let url = "http://127.0.0.1:5000/api/send";
+        let url = `${this.base_url}/api/send`;
         let send_data = {
           "msg": text,
           "username": usernameToSend
@@ -255,48 +287,55 @@ class FayInterface {
         xhr.onreadystatechange = async function () {
           if (!executed && xhr.status === 200) {
             executed = true;
-            // 成功处理逻辑（可以添加额外的回调操作）
           }
         };
       },
       loadUserList() {
         this.fayService.getUserList().then((response) => {
           if (response && response.list) {
+            if (response.list.length == 0){
+              info = [];
+              info[0] = 1;
+              info[1] = 'User';
+              this.userList.push(info)
+              this.selectUser(info);
+            }else{
             this.userList = response.list;
-  
-            if (this.userList.length > 0) {
-              this.selectUser(this.userList[0]);
-            }
+            this.selectUser(this.userList[0]);
           }
+        }
         });
       },
       selectUser(user) {
         this.selectedUser = user;
         this.fayService.websocket.send(JSON.stringify({ "Username": user[1] }));
-        this.loadMessageHistory(user[1]); 
+        this.loadMessageHistory(user[1], 'common'); 
       },
       startLive() {
         this.liveState = 2
         this.fayService.startLive().then(() => {
+          this.sendSuccessMsg('已开启！');
         });
     },
     stopLive() {
         this.fayService.stopLive().then(() => {
             this.liveState = 3
+            this.sendSuccessMsg('已关闭！');
         });
     },
 
-      loadMessageHistory(username) {
+      loadMessageHistory(username, type) {
         this.fayService.getMessageHistory(username).then((response) => {
           if (response) {
             this.messages = response;
-            console.log(this.messages);
+            if(type == 'common'){
             this.$nextTick(() => {
               const chatContainer = this.$el.querySelector('.chatmessage');
               if (chatContainer) {
                 chatContainer.scrollTop = chatContainer.scrollHeight;
               }
             });
+          }
           }
         });
       },
@@ -307,7 +346,37 @@ class FayInterface {
             type: 'success',
         });
     
-}
+} ,
+adoptText(id) {
+  // 调用采纳接口
+  this.fayService.fetchData(`${this.base_url}/api/adopt_msg`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ id })  // 发送采纳请求
+  })
+  .then((response) => {
+    if (response && response.status === 'success') {
+      // 处理成功的响应
+      this.$notify({
+        title: '成功',
+        message: response.msg,  // 显示成功消息
+        type: 'success',
+      });
+      
+      this.loadMessageHistory(this.selectedUser[1], 'adopt');
+    } else {
+      // 处理失败的响应
+      this.$notify({
+        title: '失败',
+        message: response ? response.msg : '请求失败',
+        type: 'error',
+      });
+    }
+  })
+
+},
     }
   });
   

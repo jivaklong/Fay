@@ -29,7 +29,7 @@
       </div>
 
       <div class="main_right">
-        <div class="setting_fay_top"><span style="color: #000; font-size: 20px; padding-right: 10px;">人设</span>请设置你的数字人人设 </div>
+        <div class="setting_fay_top"><span style="color: #000; font-size: 20px; padding-right: 10px;">人设</span><span v-if="isConnected" style="color: #f56c6c;">已连接数字人</span><span style="margin-left: 10px;color:#f56c6c;" v-if="remoteAudioConnected">已连接远程音频</span> </div>
         <!-- 以上是即时信息显示 -->
   
         <div class="setting_fay">          
@@ -48,14 +48,14 @@
               <li> <span class="font_name">职&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;业:</span><input class="section_1" :disabled="!configEditable"  v-model="attribute_job" placeholder="请输入内容"/></li>
               <li> <span class="font_name">&nbsp;联系方式:</span><input class="section_1" :disabled="!configEditable" v-model="attribute_contact" placeholder="请输入内容" /></li>
               <li> <span class="font_name">Q&A文件:</span><input class="section_1" :disabled="!configEditable" v-model="QnA" placeholder="请输入内容" /></li>
-              <li> <span class="font_name">补&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;充:</span><textarea  class="section_1" style="height: 165px;vertical-align: text-top;"></textarea></li>           
+              <li> <span class="font_name">补&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;充:</span><textarea  v-model="attribute_hobby" class="section_1" style="height: 165px;vertical-align: middle;"></textarea></li>           
             </ul>
           </div>
           <div class="setting_rup">      
           <div class="setting_wakeup">            
             <ul>
               <li> <span class="font_name">唤醒模式:</span>
-                <el-switch :disabled="!configEditable"
+                <el-switch @change=saveConfig()
                 v-model="wake_word_enabled"
                 active-color="#13ce66"
                 inactive-color="#ff4949">
@@ -74,15 +74,14 @@
 
              <div class="microphone"> 
               <div class="microphone_group1">
-                <span class="font_name">扬&nbsp;声&nbsp;器&nbsp;:</span>
-                <el-switch  v-model="play_sound_enabled" active-color="#13ce66" inactive-color="#ff4949" :disabled="!configEditable"> </el-switch>
+                <span class="font_name">服务器扬声器</span>
+                <el-switch  v-model="play_sound_enabled" active-color="#13ce66" inactive-color="#ff4949" @change=saveConfig()> </el-switch>
               </div>
               <div class="microphone_group1" >
-                <span class="font_name">&nbsp;麦&nbsp;克&nbsp;风&nbsp;:</span>
-                <el-switch   v-model="source_record_enabled" active-color="#13ce66" inactive-color="#ff4949" :disabled="!configEditable"> </el-switch>
+                <span class="font_name">服务器麦克风</span>
+                <el-switch   v-model="source_record_enabled" active-color="#13ce66" inactive-color="#ff4949" @change=saveConfig()> </el-switch>
               </div>
-            </div> 
-
+            </div>    
             <div class="setting_wakeup">            
               <ul>
               <li> <span class="font_name">声音选择:</span>

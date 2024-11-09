@@ -5,6 +5,7 @@ import pyaudio
 import socket
 import psutil
 import sys
+import asyncio
 import requests
 from core.interact import Interact
 from core.recorder import Recorder
@@ -14,6 +15,7 @@ from utils import util, config_util, stream_util
 from core.wsa_server import MyServer
 from scheduler.thread_manager import MyThread
 from core import wsa_server
+from core import socket_bridge_service
 
 feiFei: fay_core.FeiFei = None
 recorderListener: Recorder = None
@@ -21,6 +23,8 @@ __running = False
 deviceSocketServer = None
 DeviceInputListenerDict = {}
 ngrok = None
+socket_service_instance = None
+
 
 #启动状态
 def is_running():
@@ -48,6 +52,13 @@ class RecorderListener(Recorder):
 
     def get_stream(self):
         try:
+            #是否录音的控制是放在recorder.py的，这里的作用是防止没有麦克风的设备出错
+            while True:
+                record = config_util.config['source']['record']
+                if record['enabled']:
+                    break
+                time.sleep(0.1)
+
             self.paudio = pyaudio.PyAudio()
             device_id = 0  # 或者根据需要选择其他设备
 
@@ -55,7 +66,6 @@ class RecorderListener(Recorder):
             device_info = self.paudio.get_device_info_by_index(device_id)
             self.channels = device_info.get('maxInputChannels', 1) #很多麦克风只支持单声道录音
             # self.sample_rate = int(device_info.get('defaultSampleRate', self.__RATE))
-            print(self.sample_rate)
 
             # 设置格式（这里以16位深度为例）
             format = pyaudio.paInt16
@@ -222,7 +232,7 @@ def kill_process_by_port(port):
         except(psutil.NosuchProcess, psutil.AccessDenied):
             pass
 #数字人端请求获取最新的自动播放消息，若自动播放服务关闭会自动退出自动播放
-def start_auto_play_service():
+def start_auto_play_service(): #TODO 评估一下有无优化的空间
     url = f"{config_util.config['source']['automatic_player_url']}/get_auto_play_item"
     user = "User" #TODO 临时固死了
     is_auto_server_error = False
@@ -318,6 +328,7 @@ def stop():
     global __running
     global DeviceInputListenerDict
     global ngrok
+    global socket_service_instance
 
     util.log(1, '正在关闭服务...')
     __running = False
@@ -331,6 +342,9 @@ def stop():
             value = DeviceInputListenerDict.pop(key)
             value.stop()
     deviceSocketServer.close()
+    if socket_service_instance is not None:
+        future = asyncio.run_coroutine_threadsafe(socket_service_instance.shutdown(), socket_service_instance.loop)
+        future.result()  
     util.log(1, '正在关闭核心服务...')
     feiFei.stop()
     util.log(1, '服务已关闭！')
@@ -341,6 +355,7 @@ def start():
     global feiFei
     global recorderListener
     global __running
+    global socket_service_instance
     util.log(1, '开启服务...')
     __running = True
 
@@ -365,13 +380,17 @@ def start():
     record = config_util.config['source']['record']
     if record['enabled']:
         util.log(1, '开启录音服务...')
-        recorderListener = RecorderListener(record['device'], feiFei)  # 监听麦克风
-        recorderListener.start()
+    recorderListener = RecorderListener(record['device'], feiFei)  # 监听麦克风
+    recorderListener.start()
 
     #启动声音沟通接口服务
     util.log(1,'启动声音沟通接口服务...')
     deviceSocketThread = MyThread(target=accept_audio_device_output_connect)
     deviceSocketThread.start()
+
+    socket_service_instance = socket_bridge_service.new_instance()
+    socket_bridge_service_Thread = MyThread(target=socket_service_instance.start_service)
+    socket_bridge_service_Thread.start()
 
     #启动自动播放服务
     util.log(1,'启动自动播放服务...')

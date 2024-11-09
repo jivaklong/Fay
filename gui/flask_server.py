@@ -7,6 +7,7 @@ import re
 from flask import Flask, render_template, request, jsonify, Response, send_file
 from flask_cors import CORS
 import requests
+import datetime
 
 import fay_booter
 
@@ -21,7 +22,7 @@ from core.interact import Interact
 from core import member_db
 import fay_booter
 from flask_httpauth import HTTPBasicAuth
-
+from core import qa_service
 
 __app = Flask(__name__)
 auth = HTTPBasicAuth()
@@ -82,8 +83,7 @@ def api_get_data():
     voice_list = tts_voice.get_voice_list()
     send_voice_list = []
     if config_util.tts_module == 'ali':
-        wsa_server.get_web_instance().add_cmd({
-        "voiceList": [
+        voice_list = [
             {"id": "abin", "name": "阿斌"},
             {"id": "zhixiaobai", "name": "知小白"},
             {"id": "zhixiaoxia", "name": "知小夏"},
@@ -159,10 +159,12 @@ def api_get_data():
             {"id": "laotie", "name": "老铁"},
             {"id": "laomei", "name": "老妹"},
             {"id": "aikan", "name": "艾侃"}
-        ]
-    })
+        
+    ]
+        send_voice_list = {"voiceList": voice_list}
+        wsa_server.get_web_instance().add_cmd(send_voice_list)
     elif config_util.tts_module == 'volcano':
-        wsa_server.get_web_instance().add_cmd({
+        voice_list = {
         "voiceList": [
             {"id": "BV001_streaming", "name": "通用女声"},
             {"id": "BV002_streaming", "name": "通用男声"},
@@ -171,7 +173,9 @@ def api_get_data():
             {"id": "zh_male_wennuanahu_moon_bigtts", "name": "温暖阿虎/Alvin"},
             {"id": "zh_female_wanwanxiaohe_moon_bigtts", "name": "湾湾小何"},
         ]
-    })    
+    }
+        send_voice_list = {"voiceList": voice_list}
+        wsa_server.get_web_instance().add_cmd(send_voice_list)
     else:
         voice_list = tts_voice.get_voice_list()
         send_voice_list = []
@@ -181,10 +185,11 @@ def api_get_data():
         wsa_server.get_web_instance().add_cmd({
             "voiceList": send_voice_list
         })
+        voice_list = send_voice_list
     wsa_server.get_web_instance().add_cmd({"deviceList": __get_device_list()})
     if fay_booter.is_running():
         wsa_server.get_web_instance().add_cmd({"liveState": 1})
-    return json.dumps({'config': config_util.config, 'voice_list' : send_voice_list})
+    return json.dumps({'config': config_util.config, 'voice_list' : voice_list})
 
 
 @__app.route('/api/start-live', methods=['post'])
@@ -227,7 +232,8 @@ def api_get_Msg():
     relist = []
     i = len(list)-1
     while i >= 0:
-        relist.append(dict(type=list[i][0], way=list[i][1], content=list[i][2], createtime=list[i][3], timetext=list[i][4], username=list[i][5]))
+        timetext = datetime.datetime.fromtimestamp(list[i][3]).strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
+        relist.append(dict(type=list[i][0], way=list[i][1], content=list[i][2], createtime=list[i][3], timetext=timetext, username=list[i][5], id=list[i][6], is_adopted=list[i][7]))
         i -= 1
     if fay_booter.is_running():
         wsa_server.get_web_instance().add_cmd({"liveState": 1})
@@ -249,7 +255,8 @@ def api_send_v1_chat_completions():
         username = 'User'
 
     model = data.get('model', 'fay')
-    interact = Interact("text", 1, {'user': username, 'msg': last_content})
+    observation = data.get('observation', '')
+    interact = Interact("text", 1, {'user': username, 'msg': last_content, 'observation': observation})
     util.printInfo(3, "文字沟通接口", '{}'.format(interact.data["msg"]), time.time())
     text = fay_booter.feiFei.on_interact(interact)
 
@@ -264,6 +271,36 @@ def api_get_Member_list():
     list = memberdb.get_all_users()
     return json.dumps({'list': list})
 
+
+@__app.route('/api/get_run_status', methods=['post'])
+def api_get_run_status():
+    status = fay_booter.is_running()
+    return json.dumps({'status': status})
+
+@__app.route('/api/adopt_msg', methods=['POST'])
+def adopt_msg():
+    data = request.get_json()
+    if not data:
+        return jsonify({'status':'error', 'msg': '未提供数据'})
+
+    id = data.get('id')
+
+    if not id:
+        return jsonify({'status':'error', 'msg': 'id不能为空'})
+
+    info = content_db.new_instance().get_content_by_id(id)
+    content = info[3]
+    if info is not None:
+        previous_info = content_db.new_instance().get_previous_user_message(id)
+        previous_content = previous_info[3]
+        result = content_db.new_instance().adopted_message(id)
+        if result:
+            qa_service.QAService().record_qapair(previous_content, content)
+            return jsonify({'status': 'success', 'msg': '采纳成功'})
+        else:
+            return jsonify({'status':'error', 'msg': '采纳失败'})
+    else:
+        return jsonify({'status':'error', 'msg': '采纳失败'})
 
 def stream_response(text):
     def generate():
