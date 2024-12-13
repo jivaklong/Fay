@@ -1,6 +1,7 @@
 import os
 import csv
 import difflib
+import random
 from utils import config_util as cfg
 from scheduler.thread_manager import MyThread
 import shlex
@@ -33,18 +34,20 @@ class QAService:
 
     def question(self, query_type, text):
         if query_type == 'qa':
-            answer_dict = self.__read_qna(cfg.config['interact']['QnA'])
+            answer_dict = self.__read_qna(cfg.config['interact'].get('QnA'))
             answer, action = self.__get_keyword(answer_dict, text, query_type)
             if action:
                 MyThread(target=self.__run, args=[action]).start()
-            return answer
+            return answer, 'qa'
     
         elif query_type == 'Persona':
             answer_dict = self.attribute_keyword
             answer, action  = self.__get_keyword(answer_dict, text, query_type)
+            return answer, 'Persona'
         elif query_type == 'command':
             answer, action  = self.__get_keyword(self.command_keyword, text, query_type)
-        return answer
+            return answer, 'command'
+        return None, None
 
     def __run(self, action):
         time.sleep(0.1)
@@ -61,7 +64,7 @@ class QAService:
                     if len(row) >= 2:
                         qna.append([row[0].split(";"), row[1], row[2] if len(row) >= 3 else None])
         except Exception as e:
-            util.log(1, 'qa文件没有指定，不匹配qa')
+            pass
         return qna
 
     def record_qapair(self, question, answer):
@@ -78,22 +81,30 @@ class QAService:
             writer.writerow([question, answer])
 
     def __get_keyword(self, keyword_dict, text, query_type):
-        last_similar = 0
-        last_answer = ''
-        last_action = ''
+        threshold = 0.6
+        candidates = []
+
         for qa in keyword_dict:
+            if len(qa) < 2:
+                continue
             for quest in qa[0]:
                 similar = self.__string_similar(text, quest)
                 if quest in text:
                     similar += 0.3
-                if similar > last_similar:
-                    last_similar = similar
-                    last_answer = qa[1]
-                    if query_type == "qa":
-                        last_action = qa[2]
-        if last_similar >= 0.6:
-            return last_answer, last_action
-        return None, None
+                if similar >= threshold:
+                    action = qa[2] if (query_type == "qa" and len(qa) > 2) else None
+                    candidates.append((similar, qa[1], action))
+
+        if not candidates:
+            return None, None
+
+        candidates.sort(key=lambda x: x[0], reverse=True)
+
+        max_hits = max(1, int(len(keyword_dict) * 0.1))
+        candidates = candidates[:max_hits]
+
+        chosen = random.choice(candidates)
+        return chosen[1], chosen[2]
 
     def __string_similar(self, s1, s2):
         return difflib.SequenceMatcher(None, s1, s2).quick_ratio()

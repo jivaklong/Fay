@@ -128,6 +128,13 @@ class FayInterface {
       });
     }
   
+    getData() {
+      return this.fetchData(`${this.baseApiUrl}/api/get-data`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      });
+  }
+
     getTime(){
       const date = new Date();
       const year = date.getFullYear();
@@ -182,13 +189,26 @@ class FayInterface {
           vueInstance.userList.push([data.panelReply.uid, data.panelReply.username]);
         }
         if (vueInstance.selectedUser && data.panelReply.username === vueInstance.selectedUser[1]) {
+          if ('is_adopted' in data.panelReply && data.panelReply.is_adopted === true) {
+            vueInstance.messages.push({
+                id: data.panelReply.id,
+                username: data.panelReply.username,
+                content: data.panelReply.content,
+                type: data.panelReply.type,
+                timetext: this.getTime(),
+                is_adopted: 1
+            });
+        } else {
           vueInstance.messages.push({
+            id: data.panelReply.id,
             username: data.panelReply.username,
             content: data.panelReply.content,
             type: data.panelReply.type,
             timetext: this.getTime(),
-            is_adopted:0
-          });
+            is_adopted: 0
+        });
+        }
+
           vueInstance.$nextTick(() => {
             const chatContainer = vueInstance.$el.querySelector('.chatmessage');
             if (chatContainer) {
@@ -226,11 +246,14 @@ class FayInterface {
         panelMsg: '', 
         panelReply: '', 
         robot:'static/images/Normal.gif',
-        base_url: 'http://127.0.0.1:5000'
+        base_url: 'http://127.0.0.1:5000',
+        play_sound_enabled: false,
+        source_record_enabled: false
       };
     },
     created() {
-      this.initFayService();
+      this.initFayService(); 
+      this.getData();
       // this.loadUserList();
     },
     methods: {
@@ -240,16 +263,6 @@ class FayInterface {
         this.fayService.websocket.addEventListener('open', () => {
           this.loadUserList();
       });
-      this.fayService.getRunStatus().then((data) => {
-        if (data) {
-            if(data.status){
-                this.liveState = 1;
-            }else{
-                this.liveState = 0;
-            }
-            
-        }
-    });
       },
       sendMessage() {
         let _this = this;
@@ -290,6 +303,80 @@ class FayInterface {
           }
         };
       },
+      getData() {
+        this.fayService.getRunStatus().then((data) => {
+            if (data) {
+                if(data.status){
+                    this.liveState = 1;
+                    this.configEditable = false;
+                }else{
+                    this.liveState = 0;
+                    this.configEditable = true;
+                }
+                
+            }
+        });
+        this.fayService.getData().then((data) => {
+            if (data) {
+                this.updateConfigFromData(data.config);
+            }
+        });
+    },
+    updateConfigFromData(config) {
+      
+        if (config.interact) {
+            this.play_sound_enabled = config.interact.playSound;
+        }
+        if (config.source && config.source.record) {
+            this.source_record_enabled = config.source.record.enabled;
+        }
+    },
+    saveConfig() {
+      let url = `${this.base_url}/api/submit`;
+      let send_data = {
+          "config": {
+              "source": {
+                  "record": {
+                      "enabled": this.source_record_enabled,
+                  },
+              },
+              "interact": {
+                  "playSound": this.play_sound_enabled,
+              }
+          }
+      };
+
+      let xhr = new XMLHttpRequest()
+      xhr.open("post", url)
+      xhr.setRequestHeader("Content-type", "application/x-www-form-urlencoded")
+      xhr.send('data=' + JSON.stringify(send_data))
+      let executed = false
+      xhr.onreadystatechange = async function () {
+          if (!executed && xhr.status === 200) {
+              try {
+                  let data = await eval('(' + xhr.responseText + ')')
+                  executed = true
+              } catch (e) {
+              }
+          }
+      }
+  },
+    changeRecord(){
+      if(this.source_record_enabled){
+        this.source_record_enabled = false
+      }else{
+        this.source_record_enabled = true
+      }
+      this.saveConfig()
+    },
+    changeSound(){
+      if(this.play_sound_enabled){
+        this.play_sound_enabled = false
+      }else{
+        this.play_sound_enabled = true
+      }
+      this.saveConfig()
+    },
       loadUserList() {
         this.fayService.getUserList().then((response) => {
           if (response && response.list) {
@@ -315,6 +402,7 @@ class FayInterface {
         this.liveState = 2
         this.fayService.startLive().then(() => {
           this.sendSuccessMsg('已开启！');
+          this.getData();
         });
     },
     stopLive() {
@@ -375,8 +463,16 @@ adoptText(id) {
       });
     }
   })
-
-},
+  .catch((error) => {
+    // 处理网络错误或HTTP错误
+    this.$notify({
+      title: '错误',
+      message: error.message || '请求失败',
+      type: 'error',
+    });
+  });
+}
+,
     }
   });
   

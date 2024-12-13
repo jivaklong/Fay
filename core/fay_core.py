@@ -26,9 +26,9 @@ from llm import nlp_rasa
 from llm import nlp_gpt
 from llm import nlp_lingju
 from llm import nlp_xingchen
-from llm import nlp_langchain
 from llm import nlp_ollama_api
 from llm import nlp_coze
+from llm.agent import fay_agent
 from core import member_db
 import threading
 import functools
@@ -58,10 +58,9 @@ modules = {
     "nlp_rasa": nlp_rasa,
     "nlp_lingju": nlp_lingju,
     "nlp_xingchen": nlp_xingchen,
-    "nlp_langchain": nlp_langchain,
     "nlp_ollama_api": nlp_ollama_api,
-    "nlp_coze": nlp_coze
-
+    "nlp_coze": nlp_coze,
+    "nlp_agent": fay_agent
 }
 
 #大语言模型回复
@@ -119,9 +118,11 @@ class FeiFei:
     def __get_answer(self, interleaver, text):
         answer = None
         # 全局问答
-        answer = qa_service.QAService().question('qa',text)
+        answer, type = qa_service.QAService().question('qa',text)
         if answer is not None:
-            return answer
+            return answer, type
+        else:
+            return None, None
         
        
     #语音消息处理
@@ -145,13 +146,13 @@ class FeiFei:
                     uid = member_db.new_instance().find_user(username)
 
                     #记录用户问题
-                    content_db.new_instance().add_content('member','speak',interact.data["msg"], username, uid)
+                    content_id = content_db.new_instance().add_content('member','speak',interact.data["msg"], username, uid)
                     if wsa_server.get_web_instance().is_connected(username):
-                        wsa_server.get_web_instance().add_cmd({"panelReply": {"type":"member","content":interact.data["msg"], "username":username, "uid":uid}, "Username" : username})
+                        wsa_server.get_web_instance().add_cmd({"panelReply": {"type":"member","content":interact.data["msg"], "username":username, "uid":uid, "id":content_id}, "Username" : username})
                     
                     #确定是否命中q&a
-                    answer = self.__get_answer(interact.interleaver, interact.data["msg"])
-
+                    answer, type = self.__get_answer(interact.interleaver, interact.data["msg"])
+                    
                     #大语言模型回复    
                     text = ''
                     textlist = []
@@ -163,18 +164,20 @@ class FeiFei:
                             wsa_server.get_instance().add_cmd(content)
                         text,textlist = handle_chat_message(interact.data["msg"], username, interact.data.get("observation", ""))
 
-                        # qa_service.QAService().record_qapair(interact.data["msg"], text)#沟通记录缓存到qa文件
                     else: 
                         text = answer
-
+                           
                     #记录回复    
                     self.write_to_file("./logs", "answer_result.txt", text)
-                    content_db.new_instance().add_content('fay','speak',text, username, uid)
+                    content_id = content_db.new_instance().add_content('fay','speak',text, username, uid)
 
                     #文字输出：面板、聊天窗、log、数字人
                     if wsa_server.get_web_instance().is_connected(username):
                         wsa_server.get_web_instance().add_cmd({"panelMsg": text, "Username" : username, 'robot': f'http://{cfg.fay_url}:5000/robot/Speaking.jpg'})
-                        wsa_server.get_web_instance().add_cmd({"panelReply": {"type":"fay","content":text, "username":username, "uid":uid}, "Username" : username})
+                        if type == 'qa':
+                            wsa_server.get_web_instance().add_cmd({"panelReply": {"type":"fay","content":text, "username":username, "uid":uid, "id":content_id, "is_adopted":True}, "Username" : username})
+                        else:
+                            wsa_server.get_web_instance().add_cmd({"panelReply": {"type":"fay","content":text, "username":username, "uid":uid, "id":content_id, "is_adopted":False}, "Username" : username})
                     if len(textlist) > 1:
                         i = 1
                         while i < len(textlist):
@@ -198,8 +201,6 @@ class FeiFei:
                     if member_db.new_instance().is_username_exist(username)  == "notexists":
                         member_db.new_instance().add_user(username)
                     uid = member_db.new_instance().find_user(username)
-                    
-                    #TODO 这里可以通过qa来触发指定的脚本操作，如ppt翻页等
 
                     if interact.data.get("text"):
                         #记录回复
@@ -217,7 +218,8 @@ class FeiFei:
                             wsa_server.get_instance().add_cmd(content)
                     
                     #声音输出
-                    MyThread(target=self.say, args=[interact, text]).start()
+                    MyThread(target=self.say, args=[interact, text]).start()  
+                
    
             except BaseException as e:
                 print(e)
@@ -436,7 +438,7 @@ class FeiFei:
 
             #发送音频给数字人接口
             if wsa_server.get_instance().is_connected(interact.data.get("user")):
-                content = {'Topic': 'Unreal', 'Data': {'Key': 'audio', 'Value': os.path.abspath(file_url), 'HttpValue': f'http://{cfg.fay_url}:5000/audio/' + os.path.basename(file_url),  'Text': text, 'Time': audio_length, 'Type': 'interact'}, 'Username' : interact.data.get('user')}
+                content = {'Topic': 'Unreal', 'Data': {'Key': 'audio', 'Value': os.path.abspath(file_url), 'HttpValue': f'http://{cfg.fay_url}:5000/audio/' + os.path.basename(file_url),  'Text': text, 'Time': audio_length, 'Type': 'interact' if interact.interact_type == 1 else 'auto_play'}, 'Username' : interact.data.get('user')}
                 #计算lips
                 if platform.system() == "Windows":
                     try:
